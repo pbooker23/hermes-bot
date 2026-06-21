@@ -1,13 +1,10 @@
 """
 HERMES - Multi-AI Life Management System
 Telegram bot with specialized AI agents for Pierre
-Each agent uses Groq (free tier) with different system prompts
 """
 
 import os
-import json
 import logging
-from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
@@ -26,8 +23,6 @@ TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 ALLOWED_USER_ID = int(os.environ.get("ALLOWED_USER_ID", "0"))
 
 memory = Memory()
-
-# ── Active agent per chat session ──────────────────────────────────────────
 user_sessions = {}  # user_id -> current agent key
 
 
@@ -35,13 +30,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if ALLOWED_USER_ID and user_id != ALLOWED_USER_ID:
         return
-
     keyboard = build_agent_menu()
     await update.message.reply_text(
-        "⚡ *HERMES ONLINE*\n\n"
-        "Your personal AI command center.\n"
-        "Pick an agent or just start talking:\n",
-        parse_mode="Markdown",
+        "⚡ *HERMES ONLINE*\n\nYour personal AI command center\\.\nPick an agent or just start talking:",
+        parse_mode="MarkdownV2",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
@@ -49,7 +41,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def build_agent_menu():
     agents_list = list(AGENTS.items())
     keyboard = []
-    # 2 buttons per row
     for i in range(0, len(agents_list), 2):
         row = []
         for key, agent in agents_list[i:i+2]:
@@ -66,7 +57,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-
     if ALLOWED_USER_ID and user_id != ALLOWED_USER_ID:
         return
 
@@ -76,16 +66,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         agent_key = data.split(":")[1]
         user_sessions[user_id] = agent_key
         agent = AGENTS[agent_key]
-
-        # Load memory for this agent
         history = memory.get_history(user_id, agent_key, limit=5)
-        history_text = f"\n\n📜 Recent context: {len(history)} messages loaded" if history else ""
-
+        history_text = f"\n\n📜 {len(history)} recent messages loaded" if history else ""
         await query.edit_message_text(
             f"{agent['emoji']} *{agent['name']} ACTIVATED*\n\n"
-            f"_{agent['description']}_\n"
-            f"{history_text}\n\n"
-            f"What do you need?",
+            f"_{agent['description']}_"
+            f"{history_text}\n\nWhat do you need?",
             parse_mode="Markdown"
         )
 
@@ -114,7 +100,7 @@ async def show_status(query_or_message, user_id):
     )
     for key, agent in AGENTS.items():
         count = stats.get(key, 0)
-        text += f"  {agent['emoji']} {agent['name']}: {count} msgs\n"
+        text += f"  {agent['emoji']} {agent['name']}: {count}\n"
 
     keyboard = [[InlineKeyboardButton("◀️ Back to Menu", callback_data="menu")]]
 
@@ -138,23 +124,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     agent_key = user_sessions.get(user_id, "general")
 
-    # Show typing indicator
     await context.bot.send_chat_action(
         chat_id=update.effective_chat.id,
         action="typing"
     )
 
-    # Get conversation history
     history = memory.get_history(user_id, agent_key, limit=10)
-
-    # Call the agent
     response = await get_agent_response(agent_key, text, history)
 
-    # Save to memory
     memory.save_message(user_id, agent_key, "user", text)
     memory.save_message(user_id, agent_key, "assistant", response)
 
-    # Build reply keyboard
     agent = AGENTS[agent_key]
     keyboard = [[
         InlineKeyboardButton("🔄 Switch Agent", callback_data="menu"),
@@ -169,11 +149,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def switch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Quick /switch command"""
     user_id = update.effective_user.id
     if ALLOWED_USER_ID and user_id != ALLOWED_USER_ID:
         return
-
     keyboard = build_agent_menu()
     await update.message.reply_text(
         "⚡ Switch Agent:",
@@ -189,11 +167,9 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Clear memory for current agent"""
     user_id = update.effective_user.id
     if ALLOWED_USER_ID and user_id != ALLOWED_USER_ID:
         return
-
     agent_key = user_sessions.get(user_id, "general")
     memory.clear_history(user_id, agent_key)
     agent = AGENTS[agent_key]
@@ -204,14 +180,12 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("switch", switch_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("clear", clear_command))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
     logger.info("HERMES is online ⚡")
     app.run_polling(drop_pending_updates=True)
 
