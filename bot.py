@@ -1,6 +1,6 @@
 """
 HERMES - Multi-AI Life Management System
-Telegram bot with specialized AI agents for Pierre
+Compatible with python-telegram-bot 20.x
 """
 
 import os
@@ -23,19 +23,7 @@ TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 ALLOWED_USER_ID = int(os.environ.get("ALLOWED_USER_ID", "0"))
 
 memory = Memory()
-user_sessions = {}  # user_id -> current agent key
-
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if ALLOWED_USER_ID and user_id != ALLOWED_USER_ID:
-        return
-    keyboard = build_agent_menu()
-    await update.message.reply_text(
-        "⚡ *HERMES ONLINE*\n\nYour personal AI command center\\.\nPick an agent or just start talking:",
-        parse_mode="MarkdownV2",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+user_sessions = {}
 
 
 def build_agent_menu():
@@ -49,8 +37,19 @@ def build_agent_menu():
                 callback_data=f"agent:{key}"
             ))
         keyboard.append(row)
-    keyboard.append([InlineKeyboardButton("📋 Status Dashboard", callback_data="status")])
+    keyboard.append([InlineKeyboardButton("📋 Status", callback_data="status")])
     return keyboard
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if ALLOWED_USER_ID and user_id != ALLOWED_USER_ID:
+        return
+    await update.message.reply_text(
+        "⚡ *HERMES ONLINE*\n\nYour personal AI command center.\nPick an agent:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(build_agent_menu())
+    )
 
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -67,52 +66,30 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_sessions[user_id] = agent_key
         agent = AGENTS[agent_key]
         history = memory.get_history(user_id, agent_key, limit=5)
-        history_text = f"\n\n📜 {len(history)} recent messages loaded" if history else ""
+        ctx = f"\n\n📜 {len(history)} messages in memory" if history else ""
         await query.edit_message_text(
             f"{agent['emoji']} *{agent['name']} ACTIVATED*\n\n"
             f"_{agent['description']}_"
-            f"{history_text}\n\nWhat do you need?",
+            f"{ctx}\n\nWhat do you need?",
             parse_mode="Markdown"
         )
 
     elif data == "status":
-        await show_status(query, user_id)
+        stats = memory.get_stats(user_id)
+        active = user_sessions.get(user_id, "none")
+        active_name = AGENTS[active]["name"] if active in AGENTS else "None"
+        text = f"📊 *HERMES STATUS*\n\n🤖 Active: {active_name}\n💬 Total: {stats.get('total', 0)}\n\n*Usage:*\n"
+        for key, agent in AGENTS.items():
+            text += f"  {agent['emoji']} {agent['name']}: {stats.get(key, 0)}\n"
+        keyboard = [[InlineKeyboardButton("◀️ Menu", callback_data="menu")]]
+        await query.edit_message_text(text, parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "menu":
-        keyboard = build_agent_menu()
         await query.edit_message_text(
             "⚡ *HERMES* — Choose your agent:",
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
-
-async def show_status(query_or_message, user_id):
-    stats = memory.get_stats(user_id)
-    active = user_sessions.get(user_id, "none")
-    active_name = AGENTS[active]["name"] if active in AGENTS else "None"
-
-    text = (
-        f"📊 *HERMES STATUS*\n\n"
-        f"🤖 Active Agent: {active_name}\n"
-        f"💬 Total Messages: {stats.get('total', 0)}\n\n"
-        f"*Agent Usage:*\n"
-    )
-    for key, agent in AGENTS.items():
-        count = stats.get(key, 0)
-        text += f"  {agent['emoji']} {agent['name']}: {count}\n"
-
-    keyboard = [[InlineKeyboardButton("◀️ Back to Menu", callback_data="menu")]]
-
-    if hasattr(query_or_message, 'edit_message_text'):
-        await query_or_message.edit_message_text(
-            text, parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-    else:
-        await query_or_message.reply_text(
-            text, parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            reply_markup=InlineKeyboardMarkup(build_agent_menu())
         )
 
 
@@ -124,10 +101,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     agent_key = user_sessions.get(user_id, "general")
 
-    await context.bot.send_chat_action(
-        chat_id=update.effective_chat.id,
-        action="typing"
-    )
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
     history = memory.get_history(user_id, agent_key, limit=10)
     response = await get_agent_response(agent_key, text, history)
@@ -137,7 +111,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     agent = AGENTS[agent_key]
     keyboard = [[
-        InlineKeyboardButton("🔄 Switch Agent", callback_data="menu"),
+        InlineKeyboardButton("🔄 Switch", callback_data="menu"),
         InlineKeyboardButton("📋 Status", callback_data="status")
     ]]
 
@@ -152,18 +126,8 @@ async def switch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if ALLOWED_USER_ID and user_id != ALLOWED_USER_ID:
         return
-    keyboard = build_agent_menu()
-    await update.message.reply_text(
-        "⚡ Switch Agent:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if ALLOWED_USER_ID and user_id != ALLOWED_USER_ID:
-        return
-    await show_status(update.message, user_id)
+    await update.message.reply_text("⚡ Switch Agent:",
+        reply_markup=InlineKeyboardMarkup(build_agent_menu()))
 
 
 async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -172,17 +136,13 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     agent_key = user_sessions.get(user_id, "general")
     memory.clear_history(user_id, agent_key)
-    agent = AGENTS[agent_key]
-    await update.message.reply_text(
-        f"🗑️ Memory cleared for {agent['emoji']} {agent['name']}"
-    )
+    await update.message.reply_text(f"🗑️ Memory cleared for {AGENTS[agent_key]['emoji']} {AGENTS[agent_key]['name']}")
 
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("switch", switch_command))
-    app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("clear", clear_command))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
